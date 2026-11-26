@@ -220,7 +220,7 @@ struct ReleaseDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 10) {
                     Label(status, systemImage: automatic ? "arrow.down.circle" : "info.circle")
