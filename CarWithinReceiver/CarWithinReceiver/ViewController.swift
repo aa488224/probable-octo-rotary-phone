@@ -5,6 +5,7 @@ final class ViewController: UIViewController {
 
     private let renderer = H264Renderer()
     private let client = WSClient()
+    private let audio = AudioPlayer()
 
     private let addressField = UITextField()
     private let connectButton = UIButton(type: .system)
@@ -16,6 +17,10 @@ final class ViewController: UIViewController {
 
     private var activeTouches: [Int: Int] = [:]  // UITouch hash -> finger id
     private var nextFingerID: Int = 1
+
+    private var videoInfo = ""
+    private var audioInfo = ""
+    private var audioHint = ""
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -40,8 +45,10 @@ final class ViewController: UIViewController {
             DispatchQueue.main.async {
                 if self.renderer.configure(descriptionBase64: desc, width: w, height: h) {
                     self.client.onState?(.playing, "CarPlay \(w)×\(h) · H.264")
-                    self.infoLabel.text = "\(w)×\(h) · H.264"
+                    self.videoInfo = "\(w)×\(h) · H.264"
+                    self.refreshInfo()
                     self.client.requestKeyframe()
+                    self.client.enableAudio()   // stream started, PCM may flow now
                 } else {
                     self.statusLabel.text = "Cannot parse video format"
                     self.statusLabel.textColor = .systemRed
@@ -50,6 +57,23 @@ final class ViewController: UIViewController {
         }
         client.onFrame = { [weak self] sample, ts, key in
             self?.renderer.enqueue(avcc: sample, timestampUs: ts, keyframe: key)
+        }
+        client.onAudio = { [weak self] packet in
+            self?.audio.enqueue(packet)
+        }
+        client.onAudioAvailable = { [weak self] available in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                self.audioHint = available ? "" : "主端未开声音"
+                self.refreshInfo()
+            }
+        }
+        audio.onStats = { [weak self] stats in
+            guard let self = self else { return }
+            self.audioInfo = stats.rate > 0
+                ? String(format: "A %.0fk/%dch %.0fms", stats.rate / 1000, stats.channels, stats.buffered * 1000)
+                : "A …"
+            self.refreshInfo()
         }
 
         // Pre-fill last used address.
@@ -152,8 +176,10 @@ final class ViewController: UIViewController {
         if title == "Stop" {
             client.disconnect(startRetry: false)
             renderer.reset()
+            audio.stop()
             statusLabel.text = "Not connected"
             statusLabel.textColor = .lightGray
+            videoInfo = ""; audioInfo = ""; audioHint = ""
             infoLabel.text = ""
             connectButton.setTitle("Connect", for: .normal)
         } else {
@@ -173,12 +199,23 @@ final class ViewController: UIViewController {
             UserDefaults.standard.set("\(host):\(port)", forKey: "cw.host")
             connectButton.setTitle("Stop", for: .normal)
             renderer.reset()
+            videoInfo = ""; audioInfo = ""; audioHint = ""
+            audio.start()               // activate the audio session before packets arrive
             client.connect(host: host, port: port)
         }
     }
 
     @objc private func togglePanel() {
         UIView.animate(withDuration: 0.2) { self.controlPanel.isHidden.toggle() }
+    }
+
+    /// Video size, audio state and any sender-side hint share one status line.
+    private func refreshInfo() {
+        var parts: [String] = []
+        if !videoInfo.isEmpty { parts.append(videoInfo) }
+        if !audioInfo.isEmpty { parts.append(audioInfo) }
+        if !audioHint.isEmpty { parts.append(audioHint) }
+        infoLabel.text = parts.joined(separator: " · ")
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
