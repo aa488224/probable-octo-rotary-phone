@@ -4,6 +4,8 @@ on:
 jobs:
   build:
     runs-on: macos-15
+    env:
+      TDS_BUNDLE_IDENTIFIER: com.ios15probe.carwithin
     steps:
       - uses: actions/checkout@v4
 
