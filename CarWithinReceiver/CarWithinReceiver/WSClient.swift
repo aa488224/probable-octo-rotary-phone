@@ -150,10 +150,12 @@ final class WSClient: NSObject, URLSessionWebSocketDelegate {
         }
         guard data.count >= 9 else { return }
         let keyframe = first == 1
-        let ts = (UInt64(data[1]) << 56) | (UInt64(data[2]) << 48) |
-                 (UInt64(data[3]) << 40) | (UInt64(data[4]) << 32) |
-                 (UInt64(data[5]) << 24) | (UInt64(data[6]) << 16) |
-                 (UInt64(data[7]) << 8)  | UInt64(data[8])
+        // Built byte by byte: a single eight-term shift/or expression makes the type
+        // checker give up ("unable to type-check in reasonable time").
+        var ts: UInt64 = 0
+        for index in 1...8 {
+            ts = (ts << 8) | UInt64(data[index])
+        }
         let sample = data.subdata(in: 9..<data.count)
         onFrame?(sample, ts, keyframe)
     }
