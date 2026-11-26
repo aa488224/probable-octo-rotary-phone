@@ -1,1 +1,21 @@
-
+name: Build CarWithinReceiver IPA
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build unsigned
+        run: |
+          xcodebuild -project CarWithinReceiver/CarWithinReceiver.xcodeproj -scheme CarWithinReceiver -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -derivedDataPath build clean build
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/CarWithinReceiver.app Payload/
+          zip -qr CarWithinReceiver-unsigned.ipa Payload
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarWithinReceiver-unsigned
+          path: CarWithinReceiver-unsigned.ipa
