@@ -1616,10 +1616,9 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         if modeControl.selectedSegmentIndex == 1 {
             guard let identity else { return }
             guard let address = localCarPlayAddress else { waitForLocalNetwork(); return }
-            // 一体模式必须带音频：/info 里的 audioFormats 是无线上 CarPlay 的必备项，
-            // 缺了它 iPhone 只建立控制连接、不发媒体流。声音由本机扬声器播放。
+            // 声音仍按设置里的「声音播放」：一体用 iPhone 自己的输出，不让声音绕 CarPlay 一圈。
             var config = ReceiverConfiguration(name: nameField.text ?? "CarWithin", address: address,
-                ssid: ssidField.text ?? "", password: password, wifiChannel: channel, audioEnabled: true,
+                ssid: ssidField.text ?? "", password: password, wifiChannel: channel, audioEnabled: soundOutput != .phone,
                 videoOutputPort: outputPort, secureVideoOutputPort: httpsPort,
                 deviceID: ReceiverConfiguration.persistentDeviceID())
             if !restartingAutomatically { autoRestarts = 0; lightLevel = 0; reportedScreen = nil; primaryViewer = nil; loggedIgnoredViewer = false }
