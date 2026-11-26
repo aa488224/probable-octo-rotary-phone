@@ -66,7 +66,7 @@ final class RemoteScreenRenderer {
             let block else { return false }
         var destination: UnsafeMutablePointer<Int8>?
         var available = 0
-        guard CMBlockBufferGetDataPointer(block, offset: 0, lengthAtOffsetOut: &available,
+        guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: &available,
             totalLengthOut: nil, dataPointerOut: &destination) == kCMBlockBufferNoErr,
             let destination, available >= count else { return false }
         data.copyBytes(to: UnsafeMutableRawBufferPointer(start: destination, count: count), count: count)
