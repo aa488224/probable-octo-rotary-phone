@@ -1,0 +1,45 @@
+name: Build CarWithin iOS15
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage MFi identity
+        run: python3 cw15/ci/stage_identity.py
+
+      - name: Generate project (deployment target 15.0)
+        run: |
+          cd cw15
+          python3 Tools/generate_project.py
+          grep -c "IPHONEOS_DEPLOYMENT_TARGET = \"15.0\"" TDSCarKit.xcodeproj/project.pbxproj
+
+      - name: Build unsigned
+        run: |
+          cd cw15
+          set -o pipefail
+          xcodebuild -project TDSCarKit.xcodeproj -scheme TDSCarKit \
+            -configuration Release -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            -derivedDataPath build/out build > build.log 2>&1 || true
+          echo "=== exit summary ==="
+          tail -5 build.log
+          echo "=== errors ==="
+          grep -E "error:" build.log | sed 's|.*/cw15/||' | sort -u | head -80 || true
+          grep -qE "BUILD SUCCEEDED" build.log || exit 1
+
+      - name: Package IPA
+        run: |
+          cd cw15
+          mkdir -p Payload
+          cp -R build/out/Build/Products/Release-iphoneos/TDSCarKit.app Payload/
+          zip -qr CarWithin-ios15-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarWithin-ios15-unsigned
+          path: cw15/CarWithin-ios15-unsigned.ipa
