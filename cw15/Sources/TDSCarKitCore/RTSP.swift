@@ -69,6 +69,11 @@ public struct RTSPResponse {
         var lines = ["\(request.version) \(status) \(reason)", "Server: TDSCarKit/0.1", "Content-Length: \(body.count)", "Content-Type: \(contentType)"]
         if let sequence = request.headers["cseq"] { lines.append("CSeq: \(sequence)") }
         if request.method == "OPTIONS" { lines.append("Public: OPTIONS, GET, POST, SETUP, RECORD, TEARDOWN") }
+        // 真正的 RTSP 服务端会在 SETUP/RECORD 的应答里带上 Session；iOS 15 的 CarPlay
+        // 缺了它不会把这条流当成已建立，于是一直不发视频。
+        if ["SETUP", "RECORD", "TEARDOWN", "ANNOUNCE", "GET_PARAMETER", "SET_PARAMETER", "FLUSH"].contains(request.method.uppercased()) {
+            lines.append("Session: " + (request.headers["session"] ?? "1;timeout=60"))
+        }
         var data = Data((lines.joined(separator: "\r\n") + "\r\n\r\n").utf8); data.append(body); return data
     }
 }

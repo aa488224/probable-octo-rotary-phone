@@ -106,7 +106,16 @@ final class CarPlayMediaSession {
             if let proposed = values["features"] as? [String] {
                 onLog?(CWL("iPhone 提议的会话功能：{1}", [String(describing: proposed.joined(separator: ", "))]))
             }
-            let features = hevc ? ["hevc", "viewAreas"] : ["viewAreas"]
+            var features = hevc ? ["hevc", "viewAreas"] : ["viewAreas"]
+            // iOS 15 的 CarPlay 只有在配件明确启用它提议的能力（uiContext / cornerMasks 等）后，
+            // 才会继续发起媒体流 SETUP；iOS 16 不需要，因此只在 15 上回显，避免影响已成功的路径。
+            if #available(iOS 16.0, *) {
+            } else if let proposed = values["features"] as? [String] {
+                var echoed = proposed.filter { $0 != "hevc" || hevc }
+                if !echoed.contains("viewAreas") { echoed.append("viewAreas") }
+                features = echoed
+                onLog?(CWL("已启用 iPhone 提议的会话功能：{1}", [String(describing: echoed.joined(separator: ", "))]))
+            }
             response = ["eventPort": listener.port, "timingPort": timing!.port, "enabledFeatures": features]
             onLog?(CWL("事件/时钟同步监听器已就绪：{1}/{2}", [String(describing: listener.port), String(describing: timing!.port)]))
         }
@@ -143,6 +152,8 @@ final class CarPlayMediaSession {
         flushNightMode()
     }
     var hasEventChannel: Bool { event != nil && eventCipher != nil }
+    /// 媒体流 SETUP 是否已经问过端口；RECORD 之后仍为空说明 iPhone 没准备发视频。
+    var hasMediaStreams: Bool { videoListener != nil || !audio.isEmpty }
     /// Full multitouch state: every slot is reported each time; missing slots report up.
     func touch(_ contacts: [CarPlayInfo.TouchContact]) {
         _ = sendHID(CarPlayInfo.HID.touch, CarPlayInfo.touchReport(contacts), label: CWL("触控"))
@@ -195,8 +206,9 @@ final class CarPlayMediaSession {
         eventListener = nil; videoListener = nil; event = nil; video = nil; timing = nil; screen = nil; eventCipher = nil
     }
     func feedback() throws -> Data? {
-        guard !audio.isEmpty, let timing else { return nil }
+        guard let timing else { return nil }
         let streams = audio.map { $0.value.feedback(type: $0.key, ntp: timing.timestamp()) }
+        // 没有音频流时也要回一份合法的时间同步：iOS 15 的 CarPlay 收到空响应会一直等下去。
         return try PropertyListSerialization.data(fromPropertyList: ["streams": streams], format: .binary, options: 0)
     }
     /// A stream-specific teardown must not terminate the other live streams.

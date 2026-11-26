@@ -96,6 +96,10 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     private let performanceControl = ChoiceMenu(items: BrowserPerformance.allCases.map(\.title))
     private let showTouchesSwitch = UISwitch()
     private let carButtonSwitch = UISwitch()
+    /// 一体模式下是否让网页窗口决定 CarPlay 分辨率。默认关闭：网页只做镜像，
+    /// 否则网页每次连接／改窗口尺寸都会重启 CarPlay，打断本机正在显示的会话。
+    private let browserResolutionSwitch = UISwitch()
+    private var loggedIgnoredViewer = false
     private static let customVehicleIconKey = "customVehicleButtonPNG"
     private var customVehicleIcon: Data? { UserDefaults.standard.data(forKey: Self.customVehicleIconKey) }
     private var importingVehicleIcon = false
@@ -878,6 +882,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         defaults.set(autoRestartSwitch.isOn, forKey: "autoRestart")
         defaults.set(showTouchesSwitch.isOn, forKey: "showTouches")
         defaults.set(carButtonSwitch.isOn, forKey: "carButton")
+        defaults.set(browserResolutionSwitch.isOn, forKey: "browserDrivesResolution")
     }
     private var selectedPerformance: BrowserPerformance { BrowserPerformance.allCases[max(0, performanceControl.selectedSegmentIndex)] }
     private var followsCarScreen: Bool { sizeModeControl.selectedSegmentIndex == 0 }
@@ -1611,11 +1616,13 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         if modeControl.selectedSegmentIndex == 1 {
             guard let identity else { return }
             guard let address = localCarPlayAddress else { waitForLocalNetwork(); return }
+            // 一体模式必须带音频：/info 里的 audioFormats 是无线上 CarPlay 的必备项，
+            // 缺了它 iPhone 只建立控制连接、不发媒体流。声音由本机扬声器播放。
             var config = ReceiverConfiguration(name: nameField.text ?? "CarWithin", address: address,
-                ssid: ssidField.text ?? "", password: password, wifiChannel: channel, audioEnabled: soundOutput != .phone,
+                ssid: ssidField.text ?? "", password: password, wifiChannel: channel, audioEnabled: true,
                 videoOutputPort: outputPort, secureVideoOutputPort: httpsPort,
                 deviceID: ReceiverConfiguration.persistentDeviceID())
-            if !restartingAutomatically { autoRestarts = 0; lightLevel = 0; reportedScreen = nil; primaryViewer = nil }
+            if !restartingAutomatically { autoRestarts = 0; lightLevel = 0; reportedScreen = nil; primaryViewer = nil; loggedIgnoredViewer = false }
             configureDisplay(&config)
             do { try config.validate() } catch {
                 log(CWL("无法启动本机 CarPlay：{1}", [String(describing: error.localizedDescription)]))
@@ -1927,6 +1934,18 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
 
     private func browserReportedDisplay(_ display: BrowserDisplay?, viewerID: UUID?) {
         guard running else { return }
+        // 一体模式：这台手机自己就是车机屏幕。网页只是复制一份画面给别的设备看，
+        // 不能让它的窗口尺寸改掉 CarPlay 分辨率——那会重启会话，本机画面随之中断。
+        if modeControl.selectedSegmentIndex == 1, !browserResolutionSwitch.isOn {
+            primaryViewer = viewerID
+            if let display, !loggedIgnoredViewer {
+                loggedIgnoredViewer = true
+                log(CWL("网页已连接（{1}×{2}）：一体模式在本机显示，保持当前分辨率，不重启 CarPlay",
+                    [String(describing: display.width), String(describing: display.height)]))
+            }
+            refreshScreenMenu()
+            return
+        }
         reportedScreen = display.map(CarScreenStore.record)
         primaryViewer = viewerID
         refreshScreenMenu()
@@ -1935,7 +1954,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
 
     private func scheduleScreenAdaptation() {
         screenAdaptation?.cancel(); screenAdaptation = nil
-        guard running, reportedScreen != nil, modeControl.selectedSegmentIndex == 1 else { return }
+        guard running, reportedScreen != nil, modeControl.selectedSegmentIndex == 1,
+              browserResolutionSwitch.isOn else { return }
         // Refresh rate and viewport reports can arrive separately. Apply the settled plan once.
         let work = DispatchWorkItem { [weak self] in self?.adaptToPrimaryScreen() }
         screenAdaptation = work
@@ -2082,8 +2102,9 @@ extension ReceiverViewController {
         autoRestartSwitch.isOn = defaults.object(forKey: "autoRestart") as? Bool ?? false
         showTouchesSwitch.isOn = defaults.bool(forKey: "showTouches")
         carButtonSwitch.isOn = defaults.object(forKey: "carButton") as? Bool ?? true
+        browserResolutionSwitch.isOn = defaults.object(forKey: "browserDrivesResolution") as? Bool ?? false
         let displayControls: [UIControl] = [resolutionControl, aspectRatioControl, sizeModeControl, frameRateControl, codecControl, iconSizeControl,
-                                            performanceControl, autoRestartSwitch, showTouchesSwitch, carButtonSwitch]
+                                            performanceControl, autoRestartSwitch, showTouchesSwitch, carButtonSwitch, browserResolutionSwitch]
         displayControls.forEach { $0.addTarget(self, action: #selector(displaySettingChanged), for: .valueChanged) }
         appearanceControl.selectedSegmentIndex = defaults.integer(forKey: "carPlayAppearance")
         appearanceControl.addTarget(self, action: #selector(appearanceChanged), for: .valueChanged)
@@ -2515,6 +2536,9 @@ extension ReceiverViewController {
             size.append(.control(followsCarScreen ? CWL("最高分辨率") : CWL("分辨率"), icon: ("arrow.up.left.and.arrow.down.right", .systemGreen), resolutionControl))
             if !followsCarScreen {
                 size.append(.control(CWL("画面比例"), icon: ("aspectratio", .systemGreen), aspectRatioControl))
+            }
+            if modeControl.selectedSegmentIndex == 1 {
+                size.append(.control(CWL("网页窗口决定分辨率"), icon: ("safari.fill", .systemGreen), browserResolutionSwitch))
             }
             if UIDevice.current.userInterfaceIdiom == .pad, modeControl.selectedSegmentIndex != 2 {
                 size.append(.control(CWL("CarPlay 方向"), icon: ("rotate.right.fill", .systemGreen), orientationControl))

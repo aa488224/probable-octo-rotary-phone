@@ -535,8 +535,14 @@ final class NativeReceiver {
             }
             return RTSPResponse(body: try state.media!.setup(request.body), contentType: "application/x-apple-binary-plist")
         case ("RECORD", _):
-            guard state.media != nil else { throw ProtocolError.malformed(CWL("在 SETUP 前收到 RECORD")) }
+            guard let media = state.media else { throw ProtocolError.malformed(CWL("在 SETUP 前收到 RECORD")) }
             log(CWL("已接受 CarPlay RECORD，正在等待视频"))
+            queue.asyncAfter(deadline: .now() + 8) { [weak self] in
+                guard let self, self.sessions[id] != nil else { return }
+                if !media.hasMediaStreams {
+                    self.log(CWL("RECORD 后 8 秒仍未收到媒体流 SETUP：iPhone 没有问视频端口，所以不会发画面"))
+                }
+            }
             return RTSPResponse()
         case ("POST", "/pair-setup"):
             guard state.cipher == nil, let setup = state.setup else { throw ProtocolError.malformed(CWL("pair-setup 不可用")) }
