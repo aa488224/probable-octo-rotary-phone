@@ -85,8 +85,9 @@ final class RemoteScreenClient: NSObject, URLSessionWebSocketDelegate {
 
     private func open() {
         guard running else { return }
-        guard let url = URL(string: "ws://\(host):\(port)/stream") else {
-            onState?(.failed("地址无效")); return
+        guard (1...65535).contains(port), !host.isEmpty,
+              let url = URL(string: "ws://\(host):\(port)/stream") else {
+            onState?(.failed("地址无效")); running = false; return
         }
         onState?(.connecting)
         let configuration = URLSessionConfiguration.default
@@ -201,24 +202,26 @@ final class RemoteScreenClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func handleBinary(_ data: Data) {
-        let count = data.count
-        guard count >= 10 else { return }
-        let start = data.startIndex
-        let kind = data[start]
-        if kind == 3 {
-            guard count >= 16 else { return }
-            let sampleRate = UInt32(data[start + 9]) << 24 | UInt32(data[start + 10]) << 16
-                | UInt32(data[start + 11]) << 8 | UInt32(data[start + 12])
-            let channels = Int(data[start + 13])
-            let stream = Int(data[start + 14])
-            let pcm = data.subdata(in: (start + 15)..<(start + count))
-            guard sampleRate >= 8000, sampleRate <= 96_000, (1...2).contains(channels) else { return }
-            onAudio?(pcm, sampleRate, channels, stream)
-            return
+        // 用裸指针按偏移读，避免 Data 下标越界；格式不合法的包直接丢，不再有机会崩。
+        data.withUnsafeBytes { raw in
+            let count = raw.count
+            guard count >= 10, let base = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            let kind = base[0]
+            if kind == 3 {
+                guard count >= 16 else { return }
+                let sampleRate = UInt32(base[9]) << 24 | UInt32(base[10]) << 16 | UInt32(base[11]) << 8 | UInt32(base[12])
+                let channels = Int(base[13])
+                let stream = Int(base[14])
+                guard sampleRate >= 8000, sampleRate <= 96_000, (1...2).contains(channels), count > 15 else { return }
+                let pcm = Data(bytes: base + 15, count: count - 15)
+                onAudio?(pcm, sampleRate, channels, stream)
+                return
+            }
+            var stamp: UInt64 = 0
+            for offset in 1...8 { stamp = stamp << 8 | UInt64(base[offset]) }
+            guard count > 9 else { return }
+            onFrame?(Data(bytes: base + 9, count: count - 9), stamp, kind == 1)
         }
-        var stamp: UInt64 = 0
-        for offset in 1...8 { stamp = stamp << 8 | UInt64(data[start + offset]) }
-        onFrame?(data.subdata(in: (start + 9)..<(start + count)), stamp, kind == 1)
     }
 
     deinit { stopQuietly() }

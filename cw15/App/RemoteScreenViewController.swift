@@ -26,6 +26,8 @@ final class RemoteScreenViewController: UIViewController {
     private var nextFingerID = 1
     private var overlayVisible = true
     private var muted = false
+    /// 查找与自动连接推迟到界面出现之后，避免还没上屏就收到回调。
+    private var didStartDiscovery = false
 
     private static let addressKey = "cw.remote.host"
 
@@ -39,6 +41,12 @@ final class RemoteScreenViewController: UIViewController {
         bind()
         addressField.text = UserDefaults.standard.string(forKey: Self.addressKey) ?? ""
         updateStatus("正在查找局域网内的 CarWithin 主机…")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !didStartDiscovery else { return }
+        didStartDiscovery = true
         finder.videoPort = 9888
         finder.start()
         // 已经用过的主机直接连，省一步。
@@ -230,7 +238,7 @@ final class RemoteScreenViewController: UIViewController {
             }
         }
         client.onLog = { [weak self] message in
-            self?.statusLabel.text = message
+            self?.updateStatus(message)
         }
         client.onFormat = { [weak self] description, width, height in
             guard let self else { return }
@@ -250,17 +258,22 @@ final class RemoteScreenViewController: UIViewController {
             self?.client.requestKeyframe()
         }
         audio.onLog = { [weak self] message in
-            self?.statusLabel.text = message
+            self?.updateStatus(message)
         }
         finder.onUpdate = { [weak self] hosts in
             self?.showHosts(hosts)
         }
         finder.onLog = { [weak self] message in
-            self?.statusLabel.text = message
+            self?.updateStatus(message)
         }
     }
 
     private func showHosts(_ hosts: [RemoteHost]) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.showHosts(hosts) }
+            return
+        }
+        guard isViewLoaded else { return }
         hostStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for host in hosts.prefix(6) {
             let button = UIButton(type: .system)
@@ -374,6 +387,11 @@ final class RemoteScreenViewController: UIViewController {
     }
 
     private func updateStatus(_ text: String) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.updateStatus(text) }
+            return
+        }
+        guard isViewLoaded else { return }
         statusLabel.text = text
     }
 

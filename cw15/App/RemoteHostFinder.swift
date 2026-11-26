@@ -41,9 +41,16 @@ final class RemoteHostFinder: NSObject {
         scanning = false
     }
 
+    /// 扫描、Bonjour 回调可能落在后台队列，UI 只能在主线程改。
+    private func report(_ message: String) {
+        if Thread.isMainThread { onLog?(message) }
+        else { DispatchQueue.main.async { [weak self] in self?.onLog?(message) } }
+    }
+
     private func publish() {
         let list = hosts.values.sorted { $0.address < $1.address }
-        onUpdate?(list)
+        if Thread.isMainThread { onUpdate?(list) }
+        else { DispatchQueue.main.async { [weak self] in self?.onUpdate?(list) } }
     }
 
     private func add(name: String, address: String, port: Int) {
@@ -60,14 +67,14 @@ final class RemoteHostFinder: NSObject {
     private func scanSubnet() {
         guard !scanning else { return }
         guard let (local, mask) = Self.localIPv4() else {
-            onLog?("未取得 Wi-Fi 地址，跳过网段扫描")
+            report("未取得 Wi-Fi 地址，跳过网段扫描")
             return
         }
         scanning = true
         let parts = local.split(separator: ".").compactMap { Int($0) }
         let maskParts = mask.split(separator: ".").compactMap { Int($0) }
         guard parts.count == 4, maskParts.count == 4 else { scanning = false; return }
-        onLog?("扫描 \(parts[0]).\(parts[1]).\(parts[2]).1-254 的 \(videoPort) 端口")
+        report("扫描 \(parts[0]).\(parts[1]).\(parts[2]).1-254 的 \(videoPort) 端口")
 
         var pending: [String] = []
         for last in 1...254 where "\(parts[0]).\(parts[1]).\(parts[2]).\(last)" != local {
@@ -77,7 +84,7 @@ final class RemoteHostFinder: NSObject {
         let batch = 40
         func nextBatch() {
             guard scanning, index < pending.count else {
-                if scanning { scanning = false; onLog?("网段扫描结束，共 \(hosts.count) 台") }
+                if scanning { scanning = false; report("网段扫描结束，共 \(hosts.count) 台") }
                 return
             }
             let slice = pending[index..<min(index + batch, pending.count)]
@@ -136,6 +143,7 @@ final class RemoteHostFinder: NSObject {
     private static func string(from address: UnsafePointer<sockaddr>) -> String? {
         var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
         let length = socklen_t(address.pointee.sa_len)
+        guard length > 0 else { return nil }
         guard getnameinfo(address, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { return nil }
         return String(cString: host)
     }
@@ -149,7 +157,7 @@ extension RemoteHostFinder: NetServiceBrowserDelegate {
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
-        onLog?("Bonjour 搜索失败，改用网段扫描")
+        report("Bonjour 搜索失败，改用网段扫描")
     }
 }
 

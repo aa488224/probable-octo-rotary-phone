@@ -24,18 +24,20 @@ final class RemoteScreenRenderer {
         guard let avcC = Data(base64Encoded: descriptionBase64), let (sps, pps) = Self.parseAVCC(avcC) else {
             return false
         }
+        // 空参数集会拿到 nil 指针，之前直接强解包，格式异常就崩。
+        guard !sps.isEmpty, !pps.isEmpty else { return false }
         var description: CMVideoFormatDescription?
         var sizes = [sps.count, pps.count]
-        let status: OSStatus = sps.withUnsafeBytes { spsRaw in
-            pps.withUnsafeBytes { ppsRaw in
-                var pointers: [UnsafePointer<UInt8>] = [
-                    spsRaw.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                    ppsRaw.baseAddress!.assumingMemoryBound(to: UInt8.self)
-                ]
-                return pointers.withUnsafeMutableBufferPointer { buffer in
-                    CMVideoFormatDescriptionCreateFromH264ParameterSets(
+        let status: OSStatus = sps.withUnsafeBytes { spsRaw -> OSStatus in
+            guard let spsBase = spsRaw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return -1 }
+            return pps.withUnsafeBytes { ppsRaw -> OSStatus in
+                guard let ppsBase = ppsRaw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return -1 }
+                var pointers: [UnsafePointer<UInt8>] = [spsBase, ppsBase]
+                return pointers.withUnsafeMutableBufferPointer { buffer -> OSStatus in
+                    guard let base = buffer.baseAddress else { return -1 }
+                    return CMVideoFormatDescriptionCreateFromH264ParameterSets(
                         allocator: kCFAllocatorDefault, parameterSetCount: 2,
-                        parameterSetPointers: buffer.baseAddress!, parameterSetSizes: &sizes,
+                        parameterSetPointers: base, parameterSetSizes: &sizes,
                         nalUnitHeaderLength: 4, formatDescriptionOut: &description)
                 }
             }
