@@ -2443,6 +2443,11 @@ extension ReceiverViewController {
                     .control(CWL("锁屏与后台继续运行"), icon: ("lock.fill", .systemPurple), keepAliveSwitch),
                     .control(CWL("画中画开启时机"), icon: ("pip.fill", .systemIndigo), pictureInPictureTiming)
                 ]),
+                SettingsSection("另一台手机当主机", footer: "在另一台 iPhone 上启动 CarPlay，本机只做屏幕：原生显示画面、回传触控和播放伴音，不需要浏览器。", [
+                    .page("作为屏幕接收 CarPlay", icon: ("rectangle.on.rectangle", .systemBlue)) {
+                        RemoteScreenViewController()
+                    }
+                ]),
                 SettingsSection(CWL("支持"), [
                     .externalLink(CWL("关注作者"), icon: ("heart.fill", .systemRed), detail: CWL("抖音")) {
                         UIApplication.shared.open(Self.authorURL)
