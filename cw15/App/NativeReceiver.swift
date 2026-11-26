@@ -606,6 +606,7 @@ final class NativeReceiver {
                 log("CarPlay TEARDOWN details: keys=\(values.keys.sorted().joined(separator: ",")); streams=\(types.map { String(describing: $0) } ?? "absent (entire media session)")")
             } else {
                 log("CarPlay TEARDOWN details: no property-list dictionary; bytes=\(request.body.count)")
+                log("CarPlay TEARDOWN raw: \(request.body.prefix(48).map { String(format: "%02X", $0) }.joined())")
             }
             if try state.media?.teardown(request.body) == true {
                 state.media = nil

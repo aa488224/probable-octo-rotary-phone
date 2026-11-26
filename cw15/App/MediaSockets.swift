@@ -78,6 +78,9 @@ final class MediaTiming {
     private var timer: DispatchSourceTimer?
     private var pending: Data?
     private var offset: Double = 0
+    /// 诊断：iOS 15 可能用标准 NTP（48 字节），之前只认 32 字节的 AirPlay 时间包。
+    private var packetCount = 0
+    var onLog: ((String) -> Void)?
     private let origin = Date().timeIntervalSince1970 + 2_208_988_800
     private let monotonic = ProcessInfo.processInfo.systemUptime
     private func now() -> Double { origin + ProcessInfo.processInfo.systemUptime - monotonic + offset }
@@ -113,8 +116,30 @@ final class MediaTiming {
             guard let self else { return }
             var bytes = [UInt8](repeating: 0, count: 2048), peer = sockaddr_in(); var count = socklen_t(MemoryLayout<sockaddr_in>.size)
             let length = withUnsafeMutablePointer(to: &peer) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(fd, &bytes, bytes.count, 0, $0, &count) } }
-            guard length == 32, peer.sin_addr.s_addr == remote.sin_addr.s_addr, peer.sin_port == remote.sin_port else { return }
+            guard length >= 32, peer.sin_addr.s_addr == remote.sin_addr.s_addr, peer.sin_port == remote.sin_port else { return }
             let message = Data(bytes.prefix(length))
+            self.packetCount += 1
+            if self.packetCount <= 4 {
+                self.onLog?(CWL("时钟同步：收到 {1} 字节，模式 {2}", [String(describing: length), String(describing: Int(bytes[0] & 0x07))]))
+            }
+            // 标准 NTP（48 字节，低 3 位 mode=3）：iOS 15 的 CarPlay 用它校时。
+            // 以前只处理 AirPlay 的 32 字节时间包，这类请求被直接丢掉 → 时钟没同步 →
+            // RECORD 之后 iPhone 立刻 TEARDOWN。
+            if length >= 48, bytes[1] != 210, bytes[1] != 211, bytes[0] & 0x07 == 3 {
+                var response = Data(count: 48)
+                response[0] = 0x24          // LI 0, VN 4, mode 4（服务端）
+                response[1] = 2             // stratum
+                response[2] = 6             // poll
+                response[3] = 0xEC          // precision -20
+                response.replaceSubrange(12..<16, with: Data("LOCL".utf8))
+                response.replaceSubrange(16..<24, with: message.subdata(in: 40..<48))
+                let stamp = Self.encode(self.now())
+                response.replaceSubrange(24..<32, with: stamp)
+                response.replaceSubrange(32..<40, with: stamp)
+                send(response)
+                if self.packetCount <= 4 { self.onLog?(CWL("时钟同步：已按标准 NTP 回包")) }
+                return
+            }
             if bytes[1] == 210 {
                 var response = Data([0x80, 211, 0, 7]) + Data(count: 4)
                 response += message.suffix(8); response += Self.encode(self.now()); response += Self.encode(self.now()); send(response)

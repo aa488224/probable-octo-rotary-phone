@@ -101,6 +101,7 @@ final class CarPlayMediaSession {
             let timingPort = (values["timingPort"] as? NSNumber)?.intValue ?? 0
             guard (0...65535).contains(timingPort) else { throw ProtocolError.malformed(CWL("时钟同步端口")) }
             timing = try MediaTiming(queue: queue, peerAddress: peerAddress, peerPort: UInt16(timingPort))
+            timing?.onLog = { [weak self] in self?.onLog?($0) }
             let listener = try MediaTCPListener(queue: queue, peerAddress: peerAddress); eventListener = listener
             listener.onConnection = { [weak self] connection in self?.acceptEvent(connection) }
             if let proposed = values["features"] as? [String] {
