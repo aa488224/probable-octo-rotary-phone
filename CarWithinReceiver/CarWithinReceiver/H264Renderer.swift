@@ -87,7 +87,7 @@ final class H264Renderer {
         var dest: UnsafeMutablePointer<Int8>?
         var available = 0
         let ptrStatus = CMBlockBufferGetDataPointer(
-            bb, offset: 0, lengthAtOffsetOut: &available,
+            bb, atOffset: 0, lengthAtOffsetOut: &available,
             totalLengthOut: nil, dataPointerOut: &dest
         )
         guard ptrStatus == kCMBlockBufferNoErr, let p = dest, available >= count else { return false }
