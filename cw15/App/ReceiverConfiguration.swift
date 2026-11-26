@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import Security
+import UIKit
 
 struct ReceiverConfiguration {
     var name = "CarWithin"
@@ -65,9 +66,46 @@ struct ReceiverConfiguration {
         Resolution(label: "720P", width: 1280, height: 720),
         Resolution(label: "1080P", width: 1920, height: 1080),
         Resolution(label: "2K", width: 2560, height: 1440),
-        Resolution(label: "4K", width: 3840, height: 2160)
+        Resolution(label: "4K", width: 3840, height: 2160),
+        // 用本机屏幕的物理分辨率（横过来）当车机画面：6s Plus 这类 16:9 屏幕就是
+        // 1920×1080，全面屏就是 19.5:9 之类，长宽比天生一致，横屏后刚好撑满不留黑边。
+        Resolution(label: CWL("自动（本机屏幕）"), width: 0, height: 0)
     ]
     static let defaultResolutionIndex = 1
+    /// 「自动（本机屏幕）」在 resolutions 里的下标。
+    static var autoResolutionIndex: Int { resolutions.count - 1 }
+    /// 本机屏幕横向的物理像素尺寸（6s Plus → 1920×1080）。
+    static func nativeDisplaySize() -> (width: Int, height: Int) {
+        let bounds = UIScreen.main.nativeBounds
+        let long = Int(max(bounds.width, bounds.height))
+        let short = Int(min(bounds.width, bounds.height))
+        return (max(320, long / 2 * 2), max(320, short / 2 * 2))
+    }
+    /// 机型标识（如 iPhone8,2）转可读名称，只用于日志。
+    static func deviceModelName() -> String {
+        var info = utsname(); uname(&info)
+        let identifier = withUnsafeBytes(of: &info.machine) { raw -> String in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        let names: [String: String] = [
+            "iPhone8,1": "iPhone 6s", "iPhone8,2": "iPhone 6s Plus",
+            "iPhone9,1": "iPhone 7", "iPhone9,3": "iPhone 7",
+            "iPhone9,2": "iPhone 7 Plus", "iPhone9,4": "iPhone 7 Plus",
+            "iPhone10,1": "iPhone 8", "iPhone10,4": "iPhone 8",
+            "iPhone10,2": "iPhone 8 Plus", "iPhone10,5": "iPhone 8 Plus",
+            "iPhone10,3": "iPhone X", "iPhone10,6": "iPhone X",
+            "iPhone11,2": "iPhone XS", "iPhone11,4": "iPhone XS Max", "iPhone11,6": "iPhone XS Max",
+            "iPhone11,8": "iPhone XR",
+            "iPhone12,1": "iPhone 11", "iPhone12,3": "iPhone 11 Pro", "iPhone12,5": "iPhone 11 Pro Max",
+            "iPhone13,1": "iPhone 12 mini", "iPhone13,2": "iPhone 12",
+            "iPhone13,3": "iPhone 12 Pro", "iPhone13,4": "iPhone 12 Pro Max",
+            "iPhone14,2": "iPhone 13 Pro", "iPhone14,3": "iPhone 13 Pro Max",
+            "iPhone14,4": "iPhone 13 mini", "iPhone14,5": "iPhone 13",
+            "iPhone14,7": "iPhone 14", "iPhone14,8": "iPhone 14 Plus",
+            "iPhone15,2": "iPhone 14 Pro", "iPhone15,3": "iPhone 14 Pro Max"
+        ]
+        return names[identifier].map { "\($0)（\(identifier)）" } ?? identifier
+    }
 
     struct AspectRatio {
         let width: Int

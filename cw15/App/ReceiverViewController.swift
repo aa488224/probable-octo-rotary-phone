@@ -86,7 +86,9 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     private var networkRestartCount = 0
     private var localStartupID: UUID?
     private let aspectRatioControl = ChoiceMenu(items: [CWL("预设比例")] + ReceiverConfiguration.aspectRatios.map(\.title))
-    private let resolutionControl = ChoiceMenu(items: ReceiverConfiguration.resolutions.map { "\($0.label)（\($0.width)×\($0.height)）" })
+    private let resolutionControl = ChoiceMenu(items: ReceiverConfiguration.resolutions.map {
+        $0.width > 0 ? "\($0.label)（\($0.width)×\($0.height)）" : $0.label
+    })
     private let frameRateControl = ChoiceMenu(items: [CWL("自动"), "30 FPS", "60 FPS"])
     private let codecControl = ChoiceMenu(items: [CWL("自动"), "H.264", "H.265"])
     /// 0 = follow the head unit's screen, 1 = the fixed resolution.
@@ -99,6 +101,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     /// 一体模式下是否让网页窗口决定 CarPlay 分辨率。默认关闭：网页只做镜像，
     /// 否则网页每次连接／改窗口尺寸都会重启 CarPlay，打断本机正在显示的会话。
     private let browserResolutionSwitch = UISwitch()
+    /// 一体模式有画面后自动切横屏全屏：手机竖着也能撑满整块屏幕。
+    private let autoLandscapeSwitch = UISwitch()
     private var loggedIgnoredViewer = false
     private static let customVehicleIconKey = "customVehicleButtonPNG"
     private var customVehicleIcon: Data? { UserDefaults.standard.data(forKey: Self.customVehicleIconKey) }
@@ -673,7 +677,13 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
                     self.videoActions.isHidden = false; self.controlBar.isHidden = false
                     self.pictureInPictureButton.isHidden = self.outputMode == .zeehoSEPlus
                     self.log(CWL("视频已送入本机显示层"))
-                    if UIDevice.current.userInterfaceIdiom == .pad { self.showFullscreen() }
+                    // 一体模式：拿到第一帧就自己铺满横屏。设置页开着时不抢屏，等用户返回主界面。
+                    let settingsOpen = self.presentedViewController != nil
+                        || (self.navigationController?.topViewController ?? self) !== self
+                    if UIDevice.current.userInterfaceIdiom == .pad
+                        || (self.modeControl.selectedSegmentIndex == 1 && self.autoLandscapeSwitch.isOn && !settingsOpen) {
+                        self.showFullscreen()
+                    }
                     self.updatePictureInPicturePolicy()
                 }
                 self.pictureInPicture.sourceMayBeReady()
@@ -883,6 +893,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         defaults.set(showTouchesSwitch.isOn, forKey: "showTouches")
         defaults.set(carButtonSwitch.isOn, forKey: "carButton")
         defaults.set(browserResolutionSwitch.isOn, forKey: "browserDrivesResolution")
+        defaults.set(autoLandscapeSwitch.isOn, forKey: "localAutoLandscape")
     }
     private var selectedPerformance: BrowserPerformance { BrowserPerformance.allCases[max(0, performanceControl.selectedSegmentIndex)] }
     private var followsCarScreen: Bool { sizeModeControl.selectedSegmentIndex == 0 }
@@ -936,7 +947,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             scale = min(scale, 1920 / Double(width), 1080 / Double(height))
         }
         width = max(320, Int(Double(width) * scale) / 2 * 2); height = max(320, Int(Double(height) * scale) / 2 * 2)
-        if !followsCarScreen, let ratio = selectedAspectRatio {
+        if !followsCarScreen, resolutionControl.selectedSegmentIndex != ReceiverConfiguration.autoResolutionIndex,
+           let ratio = selectedAspectRatio {
             (width, height) = ReceiverConfiguration.fixedDisplaySize(area: capArea, ratio: ratio,
                 maxWidth: outputMode == .browser ? 3840 : 1920,
                 maxHeight: outputMode == .browser ? 3840 : 1080)
@@ -967,6 +979,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     private func selectedResolution() -> (width: Int, height: Int) {
         let options = ReceiverConfiguration.resolutions
         let index = resolutionControl.selectedSegmentIndex
+        // 自动：直接按本机屏幕的物理像素，横过来用。
+        if index == ReceiverConfiguration.autoResolutionIndex { return ReceiverConfiguration.nativeDisplaySize() }
         let option = options.indices.contains(index) ? options[index] : options[ReceiverConfiguration.defaultResolutionIndex]
         return (option.width, option.height)
     }
@@ -1206,6 +1220,10 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         }
         let source = outputMode != .browser ? headUnitOutput.selectedTitle
             : followsCarScreen ? (screen.map { CWL("车机屏幕 {1}", [String(describing: $0.title)]) } ?? CWL("尚无车机屏幕，用固定分辨率")) : CWL("固定尺寸")
+        if resolutionControl.selectedSegmentIndex == ReceiverConfiguration.autoResolutionIndex {
+            log(CWL("已识别本机：{1}，物理屏幕 {2}×{3}（横屏）",
+                [ReceiverConfiguration.deviceModelName(), String(describing: plan.width), String(describing: plan.height)]))
+        }
         log(CWL("画面计划：{1}×{2} @ {3} FPS {4}（{5}{6}）", [String(describing: plan.width), String(describing: plan.height), String(describing: plan.fps), String(describing: plan.codec.displayName), String(describing: source), String(describing: lightLevel > 0 ? CWL("，减轻档 {1}", [String(describing: lightLevel)]) : "")]))
         config.browserAudio = soundOutput == .browser && config.videoOutputPort != nil && outputMode == .browser
         if outputMode == .airPlay, config.videoOutputPort != nil { config.airPlayStreamID = UUID() }
@@ -1258,7 +1276,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         reloadVisibleSettings()
     }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
-        guard fullscreenContainer != nil, UIDevice.current.userInterfaceIdiom == .pad else { return .all }
+        // 全屏后连手机也锁到选定方向：一体模式必须是横屏才能铺满 6s Plus 这种 16:9 屏。
+        guard fullscreenContainer != nil else { return .all }
         return orientationControl.selectedSegmentIndex == 1 ? .portrait : .landscape
     }
     @objc private func showFullscreen() {
@@ -1278,18 +1297,16 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         if !sessionHasVehicleButton { addFullscreenExitButton(to: container) }
         navigationController?.setNavigationBarHidden(true, animated: false)
         setNeedsStatusBarAppearanceUpdate(); setNeedsUpdateOfHomeIndicatorAutoHidden()
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            if #available(iOS 16.0, *) {
-                setNeedsUpdateOfSupportedInterfaceOrientations()
-                view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: supportedInterfaceOrientations)) { [weak self] _ in
-                    self?.log(CWL("请把 iPad 旋转到所选方向以获得全屏画面"))
-                }
-            } else {
-                let mask = supportedInterfaceOrientations
-                let target: UIInterfaceOrientation = mask.contains(.portrait) ? .portrait : .landscapeRight
-                UIDevice.current.setValue(target.rawValue, forKey: "orientation")
-                UIViewController.attemptRotationToDeviceOrientation()
+        let mask = supportedInterfaceOrientations
+        if #available(iOS 16.0, *) {
+            setNeedsUpdateOfSupportedInterfaceOrientations()
+            view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { [weak self] _ in
+                self?.log(CWL("请把设备旋转到所选方向以获得全屏画面"))
             }
+        } else {
+            let target: UIInterfaceOrientation = mask.contains(.portrait) ? .portrait : .landscapeRight
+            UIDevice.current.setValue(target.rawValue, forKey: "orientation")
+            UIViewController.attemptRotationToDeviceOrientation()
         }
     }
 
@@ -1356,7 +1373,14 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             navigationController?.setNavigationBarHidden(false, animated: false)
             if #available(iOS 16.0, *) {
                 setNeedsUpdateOfSupportedInterfaceOrientations()
+                // 手机回到设置界面时转回竖屏，iPad 保持用户当前姿态。
+                if UIDevice.current.userInterfaceIdiom != .pad {
+                    view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+                }
             } else {
+                if UIDevice.current.userInterfaceIdiom != .pad {
+                    UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+                }
                 UIViewController.attemptRotationToDeviceOrientation()
             }
             setNeedsStatusBarAppearanceUpdate()
@@ -1858,7 +1882,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         frameRateControl.isEnabled = value
         codecControl.isEnabled = value
         [sizeModeControl, iconSizeControl, performanceControl].forEach { $0.isEnabled = value }
-        [autoRestartSwitch, showTouchesSwitch, carButtonSwitch].forEach { $0.isEnabled = value }
+        [autoRestartSwitch, showTouchesSwitch, carButtonSwitch, autoLandscapeSwitch].forEach { $0.isEnabled = value }
         driveControl.isEnabled = value
         bluetoothSetupSwitch.isEnabled = value
         transportProbeButton.isEnabled = value
@@ -2102,8 +2126,10 @@ extension ReceiverViewController {
         showTouchesSwitch.isOn = defaults.bool(forKey: "showTouches")
         carButtonSwitch.isOn = defaults.object(forKey: "carButton") as? Bool ?? true
         browserResolutionSwitch.isOn = defaults.object(forKey: "browserDrivesResolution") as? Bool ?? false
+        autoLandscapeSwitch.isOn = defaults.object(forKey: "localAutoLandscape") as? Bool ?? true
         let displayControls: [UIControl] = [resolutionControl, aspectRatioControl, sizeModeControl, frameRateControl, codecControl, iconSizeControl,
-                                            performanceControl, autoRestartSwitch, showTouchesSwitch, carButtonSwitch, browserResolutionSwitch]
+                                            performanceControl, autoRestartSwitch, showTouchesSwitch, carButtonSwitch, browserResolutionSwitch,
+                                            autoLandscapeSwitch]
         displayControls.forEach { $0.addTarget(self, action: #selector(displaySettingChanged), for: .valueChanged) }
         appearanceControl.selectedSegmentIndex = defaults.integer(forKey: "carPlayAppearance")
         appearanceControl.addTarget(self, action: #selector(appearanceChanged), for: .valueChanged)
@@ -2537,6 +2563,7 @@ extension ReceiverViewController {
                 size.append(.control(CWL("画面比例"), icon: ("aspectratio", .systemGreen), aspectRatioControl))
             }
             if modeControl.selectedSegmentIndex == 1 {
+                size.append(.control(CWL("有画面后自动横屏全屏"), icon: ("arrow.up.left.and.arrow.down.right", .systemGreen), autoLandscapeSwitch))
                 size.append(.control(CWL("网页窗口决定分辨率"), icon: ("safari.fill", .systemGreen), browserResolutionSwitch))
             }
             if UIDevice.current.userInterfaceIdiom == .pad, modeControl.selectedSegmentIndex != 2 {
