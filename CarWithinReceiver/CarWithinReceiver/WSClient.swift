@@ -14,6 +14,8 @@ final class WSClient: NSObject, URLSessionWebSocketDelegate {
     var onState: ((State, String) -> Void)?
     var onFormat: ((String, Int, Int) -> Void)?   // description(base64), width, height
     var onFrame: ((Data, UInt64, Bool) -> Void)?  // avcc sample, timestampUs, keyframe
+    var onAudio: ((Data) -> Void)?                // raw audio packet, leading byte 3
+    var onAudioAvailable: ((Bool) -> Void)?       // sender's browser audio switch
 
     private var session: URLSession!
     private var task: URLSessionWebSocketTask?
@@ -64,11 +66,14 @@ final class WSClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func ready() {
+        // audioClock:true makes the sender treat this client as audio capable. The
+        // receiver page sends `!!AudioContextClass`, i.e. true whenever it can play
+        // sound -- which is exactly our case now that AVAudioEngine is in the app.
         sendJSON([
             "type": "ready",
             "decoder": "webcodecs",
             "viewer": viewerID,
-            "audioClock": false
+            "audioClock": true
         ])
         let w = Int(UIScreen.main.bounds.width * UIScreen.main.scale)
         let h = Int(UIScreen.main.bounds.height * UIScreen.main.scale)
@@ -83,6 +88,14 @@ final class WSClient: NSObject, URLSessionWebSocketDelegate {
             "ua": "CarWithinReceiver/1.0 (iOS)"
         ])
         onState?(.waiting, "Connected, waiting for video…")
+        enableAudio()
+    }
+
+    /// Ask the sender to start forwarding PCM. The server keeps audio off until a client
+    /// that advertised `audioClock` explicitly enables it, and it also waits for the
+    /// first keyframe, so this is safe to repeat.
+    func enableAudio() {
+        sendJSON(["type": "audio", "enabled": true])
     }
 
     private func receiveNext() {
@@ -111,6 +124,9 @@ final class WSClient: NSObject, URLSessionWebSocketDelegate {
               let type = obj["type"] as? String else { return }
         switch type {
         case "hello":
+            // `audio` mirrors the sender's "browser audio" switch; without it the server
+            // never forwards PCM no matter what we ask for.
+            onAudioAvailable?(obj["audio"] as? Bool == true)
             ready()
         case "status":
             if let msg = obj["text"] as? String { onState?(.waiting, msg) }
@@ -125,14 +141,19 @@ final class WSClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func handleBinary(_ data: Data) {
-        // type 3 is audio; we ignore it (sound stays on the iPhone).
-        let bytes = [UInt8](data)
-        guard bytes.count >= 9, bytes[0] != 3 else { return }
-        let keyframe = bytes[0] == 1
-        let ts = (UInt64(bytes[1]) << 56) | (UInt64(bytes[2]) << 48) |
-                 (UInt64(bytes[3]) << 40) | (UInt64(bytes[4]) << 32) |
-                 (UInt64(bytes[5]) << 24) | (UInt64(bytes[6]) << 16) |
-                 (UInt64(bytes[7]) << 8)  | UInt64(bytes[8])
+        guard let first = data.first else { return }
+        // CarWithin multiplexes audio onto the video socket: a leading 3 means a PCM
+        // packet (see AudioPlayer for the layout), anything else is an H.264 sample.
+        if first == 3 {
+            onAudio?(data)
+            return
+        }
+        guard data.count >= 9 else { return }
+        let keyframe = first == 1
+        let ts = (UInt64(data[1]) << 56) | (UInt64(data[2]) << 48) |
+                 (UInt64(data[3]) << 40) | (UInt64(data[4]) << 32) |
+                 (UInt64(data[5]) << 24) | (UInt64(data[6]) << 16) |
+                 (UInt64(data[7]) << 8)  | UInt64(data[8])
         let sample = data.subdata(in: 9..<data.count)
         onFrame?(sample, ts, keyframe)
     }
