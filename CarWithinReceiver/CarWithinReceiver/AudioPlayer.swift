@@ -191,7 +191,10 @@ final class AudioPlayer {
     }
 
     private static func bigEndian32(_ data: Data, _ offset: Int) -> UInt32 {
-        (UInt32(data[offset]) << 24) | (UInt32(data[offset + 1]) << 16) |
-        (UInt32(data[offset + 2]) << 8) | UInt32(data[offset + 3])
+        var value: UInt32 = 0
+        for index in 0..<4 {
+            value = (value << 8) | UInt32(data[offset + index])
+        }
+        return value
     }
 }
