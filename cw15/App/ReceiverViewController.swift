@@ -1274,9 +1274,16 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         navigationController?.setNavigationBarHidden(true, animated: false)
         setNeedsStatusBarAppearanceUpdate(); setNeedsUpdateOfHomeIndicatorAutoHidden()
         if UIDevice.current.userInterfaceIdiom == .pad {
-            setNeedsUpdateOfSupportedInterfaceOrientations()
-            view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: supportedInterfaceOrientations)) { [weak self] _ in
-                self?.log(CWL("请把 iPad 旋转到所选方向以获得全屏画面"))
+            if #available(iOS 16.0, *) {
+                setNeedsUpdateOfSupportedInterfaceOrientations()
+                view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: supportedInterfaceOrientations)) { [weak self] _ in
+                    self?.log(CWL("请把 iPad 旋转到所选方向以获得全屏画面"))
+                }
+            } else {
+                let mask = supportedInterfaceOrientations
+                let target: UIInterfaceOrientation = mask.contains(.portrait) ? .portrait : .landscapeRight
+                UIDevice.current.setValue(target.rawValue, forKey: "orientation")
+                UIViewController.attemptRotationToDeviceOrientation()
             }
         }
     }
@@ -1342,7 +1349,11 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             fullscreenContainer = nil
             restoreInlineVideoSurface()
             navigationController?.setNavigationBarHidden(false, animated: false)
-            setNeedsUpdateOfSupportedInterfaceOrientations()
+            if #available(iOS 16.0, *) {
+                setNeedsUpdateOfSupportedInterfaceOrientations()
+            } else {
+                UIViewController.attemptRotationToDeviceOrientation()
+            }
             setNeedsStatusBarAppearanceUpdate()
             setNeedsUpdateOfHomeIndicatorAutoHidden()
             view.layoutIfNeeded()
