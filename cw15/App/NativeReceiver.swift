@@ -392,6 +392,12 @@ final class NativeReceiver {
         var cipher: ControlCipher?
         var media: CarPlayMediaSession?
         var peerAddress = ""
+        // 诊断：记录控制通道收了多少字节、最后一条请求是什么，用于定位对端停在何处。
+        var receivedBytes = 0
+        var requestCount = 0
+        var lastTarget = ""
+        var verified = false
+        var idleReported = false
         init(credentials: AirPlayCredentials?) {
             if let credentials {
                 setup = PairSetup(identifier: credentials.identifier, signingKey: credentials.signingKey) {
@@ -409,10 +415,13 @@ final class NativeReceiver {
             guard let self, self.connections[id] != nil else { return }
             do {
                 if let data, !data.isEmpty {
+                    state.receivedBytes += data.count
                     var input = data
                     while true {
                         let plaintext = try state.cipher?.receive(input) ?? input
                         guard let request = try state.parser.append(plaintext, maximumRequests: 1).first else { break }
+                        state.requestCount += 1
+                        state.lastTarget = "\(request.method) \(request.target.prefix(60))"
                         self.log(CWL("{1} {2} [{3} 字节]", [String(describing: request.method), String(describing: request.target.prefix(100)), String(describing: request.body.count)]))
                         let response = try self.respond(request, state: state, configuration: configuration, identity: identity)
                         let encoded = response.encoded(for: request)
@@ -425,11 +434,28 @@ final class NativeReceiver {
                             // M4 is plaintext. Only subsequent bytes use the negotiated record keys.
                             state.cipher = ControlCipher(readKey: keys.read, writeKey: keys.write)
                             input = state.parser.takeBufferedData()
+                            state.verified = true
                             self.log(CWL("Pair-Verify 已通过，已启用加密控制"))
+                            self.queue.asyncAfter(deadline: .now() + 4) { [weak self] in
+                                guard let self, let state = self.sessions[id], !state.idleReported else { return }
+                                state.idleReported = true
+                                let alive = self.connections[id] != nil
+                                self.log(CWL("配对验证后 4 秒：控制通道{1}，累计 {2} 字节 / {3} 条请求，最后一条 {4}",
+                                    [String(describing: alive ? CWL("仍在，但对面没有再发请求") : CWL("已断开")),
+                                     String(describing: state.receivedBytes), String(describing: state.requestCount),
+                                     String(describing: state.lastTarget.isEmpty ? CWL("无") : state.lastTarget)]))
+                            }
                         }
                     }
                 }
-                if complete || error != nil { connection.cancel(); self.connections.removeValue(forKey: id) }
+                if complete || error != nil {
+                    self.log(CWL("控制连接已关闭（complete={1}，error={2}，已收 {3} 字节，{4} 条请求，最后一条 {5}）",
+                        [String(describing: complete),
+                         String(describing: error.map { String(describing: $0) } ?? CWL("无")),
+                         String(describing: state.receivedBytes), String(describing: state.requestCount),
+                         String(describing: state.lastTarget.isEmpty ? CWL("无") : state.lastTarget)]))
+                    connection.cancel(); self.connections.removeValue(forKey: id)
+                }
                 else { self.receive(connection, id: id, state: state, configuration: configuration, identity: identity) }
             } catch {
                 self.log(CWL("控制连接被拒绝：{1}", [String(describing: error)])); connection.cancel(); self.connections.removeValue(forKey: id)
@@ -521,9 +547,16 @@ final class NativeReceiver {
             return RTSPResponse(body: body, contentType: "application/pairing+tlv8")
         case ("POST", "/pair-verify"):
             guard state.cipher == nil, let verify = state.verify else { throw ProtocolError.malformed(CWL("pair-verify 不可用")) }
+            if let fields = try? TLV8.decode(request.body) {
+                let keys = fields.keys.sorted().map { String(format: "%02X", $0) }.joined(separator: ",")
+                log(CWL("pair-verify 字段：{1}（{2} 字节）", [String(describing: keys), String(describing: request.body.count)]))
+            }
             return RTSPResponse(body: try verify.handle(request.body), contentType: "application/pairing+tlv8")
         case ("GET", "/info"), ("POST", "/info"):
             let info = CarPlayInfo.build(configuration)
+            log(CWL("已回应 /info：{1}×{2}，features 0x{3}",
+                [String(describing: configuration.width), String(describing: configuration.height),
+                 String(format: "%llx", CarPlayInfo.features(audio: configuration.audioEnabled))]))
             return RTSPResponse(body: try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0),
                                 contentType: "application/x-apple-binary-plist")
         case ("POST", "/auth-setup"):
