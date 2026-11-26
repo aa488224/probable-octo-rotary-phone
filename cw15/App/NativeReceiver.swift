@@ -538,7 +538,7 @@ final class NativeReceiver {
             guard let media = state.media else { throw ProtocolError.malformed(CWL("在 SETUP 前收到 RECORD")) }
             log(CWL("已接受 CarPlay RECORD，正在等待视频"))
             queue.asyncAfter(deadline: .now() + 8) { [weak self] in
-                guard let self, self.sessions[id] != nil else { return }
+                guard let self, self.activeMedia === media else { return }
                 if !media.hasMediaStreams {
                     self.log(CWL("RECORD 后 8 秒仍未收到媒体流 SETUP：iPhone 没有问视频端口，所以不会发画面"))
                 }
