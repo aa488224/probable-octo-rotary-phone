@@ -4,7 +4,7 @@ import Foundation
 import Network
 
 struct RemoteHost: Equatable {
-    let name: String
+    var name: String
     let address: String
     var port: Int
     var display: String { "\(name) · \(address):\(port)" }
@@ -133,7 +133,7 @@ final class RemoteHostFinder: NSObject {
         return wifi ?? fallback
     }
 
-    private static func string(from address: UnsafeMutablePointer<sockaddr>) -> String? {
+    private static func string(from address: UnsafePointer<sockaddr>) -> String? {
         var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
         let length = socklen_t(address.pointee.sa_len)
         guard getnameinfo(address, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { return nil }
