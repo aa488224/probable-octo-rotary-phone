@@ -281,8 +281,8 @@ struct ReleaseDetailView: View {
         .navigationTitle(automatic ? CWL("版本更新") : CWL("版本详情"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if close != nil {
-                ToolbarItem(placement: .confirmationAction) {
+            ToolbarItem(placement: .confirmationAction) {
+                if close != nil {
                     Button(CWL("完成")) {
                         if automatic { AppUpdatePolicy().snooze() }
                         finish()
