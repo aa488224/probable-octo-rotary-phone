@@ -1838,7 +1838,11 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: task)
     }
     @objc private func modeChanged() {
-        if UIDevice.current.userInterfaceIdiom == .phone { modeControl.selectedSegmentIndex = 1 }
+        // 「投送到 iPad」需要另一台 iPad 接收端，手机上没有意义；「接收其他设备」是标准
+        // AirPlay 镜像接收，手机同样可用——6s Plus 当显示屏就靠它。
+        if UIDevice.current.userInterfaceIdiom == .phone, modeControl.selectedSegmentIndex == 2 {
+            modeControl.selectedSegmentIndex = 1
+        }
         UserDefaults.standard.set(modeControl.selectedSegmentIndex, forKey: "connectionMode")
         let local = modeControl.selectedSegmentIndex == 1
         let remote = modeControl.selectedSegmentIndex == 2
@@ -1849,7 +1853,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             receiverPicker.setTitle(CWL("正在搜索 iPad 接收端…"), for: .normal)
             receiverBrowser.start()
         }
-        let title = remote ? CWL("连接到 iPad") : local ? CWL("本机 CarPlay") : CWL("CarPlay 接收屏")
+        let title = remote ? CWL("连接到 iPad") : local ? CWL("本机 CarPlay") : CWL("AirPlay 接收屏")
         let headingText = NSMutableAttributedString(string: title)
         if local, let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
             headingText.append(NSAttributedString(string: "（\(version)）", attributes: [
@@ -1859,7 +1863,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         }
         heading.attributedText = headingText
         explanation.text = remote ? CWL("选择一台 iPad，把这台 iPhone 的 CarPlay 投送到它的屏幕。")
-            : local ? CWL("无需外接盒子，直接在这台 iPhone 上启动并显示 CarPlay。") : CWL("接收另一台 iPhone 的导航、音乐和触控画面。")
+            : local ? CWL("无需外接盒子，直接在这台 iPhone 上启动并显示 CarPlay。")
+            : CWL("标准 AirPlay 镜像接收：另一台 iPhone 在控制中心选「屏幕镜像」即可投过来。")
         connectionHelp.text = remote
             ? CWL("让 iPhone 和 iPad 连接同一个 Wi-Fi。")
             : local ? CWL("先在系统设置连接 Wi-Fi，再在 CarWithin 选择对应预设。")
@@ -1868,7 +1873,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         refreshVideoOutputSummary()
         startButton.isEnabled = identity != nil
         startButton.configuration?.image = UIImage(systemName: "play.fill")
-        startButton.setTitle(remote ? CWL("连接到 iPad") : local ? CWL("启动本机 CarPlay") : CWL("启动 CarPlay 接收屏"), for: .normal)
+        startButton.setTitle(remote ? CWL("连接到 iPad") : local ? CWL("启动本机 CarPlay") : CWL("启动 AirPlay 接收"), for: .normal)
         statusLabel.text = identity == nil ? CWL("需要导入 MFi 身份") : remote ? CWL("请选择接收端") : CWL("准备就绪")
         refreshCurrentNetwork(requestPermission: false)
     }
@@ -2488,6 +2493,11 @@ extension ReceiverViewController {
                 SettingsSection(CWL("后台与画中画"), footer: CWL("锁屏前，请在 iPhone「设置 › 通用 › CarPlay › CarWithin」中打开「锁定时允许 CarPlay」。后台运行会增加耗电。画中画仅显示实时画面。离开 App 时自动开启需打开 iPhone「设置 › 通用 › 画中画」中的自动选项。"), [
                     .control(CWL("锁屏与后台继续运行"), icon: ("lock.fill", .systemPurple), keepAliveSwitch),
                     .control(CWL("画中画开启时机"), icon: ("pip.fill", .systemIndigo), pictureInPictureTiming)
+                ]),
+                SettingsSection("投屏到本机（AirPlay）", footer: "标准 AirPlay 镜像接收：另一台 iPhone/iPad 在控制中心打开「屏幕镜像」，选择本机名称即可。接收的是手机屏幕（桌面与 App），不是 CarPlay 界面。", [
+                    .page("AirPlay 屏幕镜像接收", icon: ("airplayvideo", .systemIndigo), detail: { [unowned self] in
+                        self.running && self.modeControl.selectedSegmentIndex == 0 ? "正在接收" : "未启动"
+                    }) { [unowned self] in self.airPlayReceiverPage() }
                 ]),
                 SettingsSection("另一台手机当主机", footer: "在另一台 iPhone 上启动 CarPlay，本机只做屏幕：原生显示画面、回传触控和播放伴音，不需要浏览器。", [
                     .page("作为屏幕接收 CarPlay", icon: ("rectangle.on.rectangle", .systemBlue)) {
@@ -3218,12 +3228,53 @@ extension ReceiverViewController {
         return controller
     }
 
+    /// 标准 AirPlay 屏幕镜像接收：另一台 iPhone 在控制中心选「屏幕镜像」即可，无需填 IP。
+    fileprivate func airPlayReceiverPage() -> SettingsPageController {
+        page(CWL("AirPlay 屏幕镜像接收")) { [unowned self] in
+            let raw = (self.nameField.text ?? "").trimmingCharacters(in: .whitespaces)
+            let name = raw.isEmpty ? "CarWithin" : raw
+            let receiving = self.running && self.modeControl.selectedSegmentIndex == 0
+            let status = receiving ? (self.statusLabel.text.flatMap { $0.isEmpty ? nil : $0 } ?? CWL("正在接收，等待对方镜像"))
+                : CWL("未启动")
+            var actions: [SettingsRow] = []
+            if receiving {
+                actions.append(.action(CWL("停止接收"), icon: ("stop.fill", .systemRed), destructive: true) { [unowned self] in
+                    self.stop()
+                    self.reloadVisibleSettings()
+                })
+            } else {
+                actions.append(.action(CWL("启动 AirPlay 接收"), icon: ("airplayvideo", .systemBlue)) { [unowned self] in
+                    self.modeControl.selectedSegmentIndex = 0
+                    self.modeChanged()
+                    self.toggleReceiver()
+                    self.navigationController?.popViewController(animated: true)
+                })
+            }
+            return [
+                SettingsSection([
+                    .info(CWL("本机名称"), name),
+                    .info(CWL("本机地址"), self.browserAddress ?? CWL("未取得 IP，请先连接 Wi-Fi")),
+                    .info(CWL("当前状态"), status)
+                ]),
+                SettingsSection([
+                    .guide(CWL("在另一台 iPhone / iPad 上"), icon: ("iphone", .systemBlue),
+                           CWL("打开控制中心 → 屏幕镜像 → 选择「\(name)」。两台设备要连在同一个 Wi-Fi。"))
+                ]),
+                SettingsSection(actions),
+                SettingsSection(footer: CWL("这里接收的是对方的手机屏幕（桌面与 App 画面）。CarPlay 界面不能走 AirPlay：要看另一台手机的 CarPlay，请让对方用「本机 CarPlay」，再用「作为屏幕接收」。"), [])
+            ]
+        }
+    }
+
     private func experimentSections() -> [SettingsSection] {
         var sections = [SettingsSection(CWL("实验性功能"), footer: CWL("检查这台 iPhone 是否允许 App 发布本机 iAP2 配件端点（本机 CarPlay 的前提）。CarPlay 运行中不能测试。"), [
             .action(CWL("测试本机传输能力"), icon: ("checkmark.shield.fill", .systemPink), detail: { [unowned self] in self.statusLabel.text }) { [unowned self] in
                 self.testSameDeviceTransport()
             }
         ])]
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            sections.append(SettingsSection(CWL("接收方式"), footer: CWL("「接收其他设备」是标准 AirPlay 镜像接收：另一台 iPhone 打开控制中心 → 屏幕镜像 → 选本机名称。它接收手机屏幕，不接收 CarPlay 界面；要看另一台的 CarPlay，请用「作为屏幕接收」。"), [.view(modeControl)]))
+        }
         if UIDevice.current.userInterfaceIdiom == .pad {
             sections.append(SettingsSection(CWL("iPad 模式"), footer: CWL("接收其他 iPhone 的 CarPlay，或把这台设备的 CarPlay 投送到另一台 iPad。"), [.view(modeControl)]))
             if modeControl.selectedSegmentIndex == 0 {
