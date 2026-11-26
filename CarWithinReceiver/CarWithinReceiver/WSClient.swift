@@ -161,7 +161,7 @@ final class WSClient: NSObject, URLSessionWebSocketDelegate {
         retryTimer?.invalidate(); retryTimer = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
-        session?.invalidate()
+        session?.invalidateAndCancel()
         session = nil
         receiveLoopRunning = false
     }
