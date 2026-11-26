@@ -1687,6 +1687,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             ssid: ssidField.text ?? "", password: password, wifiChannel: channel, audioEnabled: soundOutput != .phone,
             videoOutputPort: outputPort, secureVideoOutputPort: httpsPort,
             deviceID: ReceiverConfiguration.persistentDeviceID())
+        // 这个分支就是「接收其他设备」：按标准 AirPlay 镜像接收端广播。
+        config.airPlayMirrorOnly = true
         configureDisplay(&config)
         do { try config.validate(requiresWiFiCredentials: needsNetworkDetails) } catch {
             statusLabel.text = error.localizedDescription

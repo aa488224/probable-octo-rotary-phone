@@ -45,6 +45,9 @@ struct ReceiverConfiguration {
     /// Physical width declared to the iPhone; larger values fit more (smaller) icons per page.
     var widthPhysicalMM = CarPlayInfo.defaultWidthPhysicalMM
     var browserPerformance: BrowserPerformance = .auto
+    /// 「接收其他设备」= 标准 AirPlay 屏幕镜像接收。此时 Bonjour 要按镜像接收端
+    /// 的能力位广播，否则 iPhone 的「屏幕镜像」列表里根本看不到这台设备。
+    var airPlayMirrorOnly = false
     var showTouches = false
     /// Square PNG (≤ 192 px) for the car button on the CarPlay home screen; nil hides it.
     var oemIconPNG: Data?

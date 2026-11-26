@@ -211,10 +211,21 @@ final class NativeReceiver {
             let candidate = try NWListener(using: .tcp, on: port.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any)
             if let airPlayIdentity {
                 let features = CarPlayInfo.features(audio: configuration.audioEnabled)
-                let txt: [String: String] = ["deviceid": configuration.deviceID,
-                    "features": String(format: "0x%x,0x%x", UInt32(truncatingIfNeeded: features), UInt32(truncatingIfNeeded: features >> 32)),
-                    "flags": "0x4", "model": "TDSCarKit1,1", "srcvers": "509.11", "protovers": "1.1",
-                    "pi": airPlayIdentity.identifier, "pk": airPlayIdentity.signingKey.publicKey.rawRepresentation.map { String(format: "%02x", $0) }.joined()]
+                let pk = airPlayIdentity.signingKey.publicKey.rawRepresentation.map { String(format: "%02x", $0) }.joined()
+                // 屏幕镜像列表是 iOS 按 AirPlay 的镜像能力位筛出来的。车机那套 features
+                // （0x61…）iOS 不会把它当「可镜像的显示屏」，所以「接收其他设备」模式改用
+                // 标准镜像接收端的广播（等同开源 AirPlay 接收端），iPhone 才搜得到。
+                let txt: [String: String]
+                if configuration.airPlayMirrorOnly {
+                    txt = ["deviceid": configuration.deviceID, "features": "0x5A7FFFF7,0x1E",
+                        "flags": "0x4", "model": "AppleTV3,2", "srcvers": "220.68", "vv": "2",
+                        "pi": airPlayIdentity.identifier, "pk": pk]
+                } else {
+                    txt = ["deviceid": configuration.deviceID,
+                        "features": String(format: "0x%x,0x%x", UInt32(truncatingIfNeeded: features), UInt32(truncatingIfNeeded: features >> 32)),
+                        "flags": "0x4", "model": "TDSCarKit1,1", "srcvers": "509.11", "protovers": "1.1",
+                        "pi": airPlayIdentity.identifier, "pk": pk]
+                }
                 candidate.service = NWListener.Service(name: configuration.name, type: "_airplay._tcp", txtRecord: NWTXTRecord(txt))
                 candidate.serviceRegistrationUpdateHandler = { [weak self] change in self?.log(CWL("Bonjour 注册状态：{1}", [String(describing: change)])) }
             }
